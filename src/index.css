@@ -5,21 +5,36 @@
   --font-sans: "Cairo", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   
-  --color-natural-50: #FDFBF7;
-  --color-natural-100: #F5F2ED;
-  --color-natural-200: #E6E2D3;
-  --color-natural-800: #5A5A40;
-  --color-natural-900: #4A4A35;
-  
-  --color-primary: var(--color-natural-800);
-  --color-primary-hover: var(--color-natural-900);
-  --color-border-toned: var(--color-natural-200);
-  --color-bg-toned: var(--color-natural-100);
+  --color-natural-50: var(--bg-50);
+  --color-natural-100: var(--bg-100);
+  --color-natural-200: var(--bg-200);
+  --color-natural-800: var(--text-800);
+  --color-natural-900: var(--text-900);
 }
 
 @layer base {
+  :root {
+    --bg-50: #FDFBF7;
+    --bg-100: #F5F2ED;
+    --bg-200: #E6E2D3;
+    --text-800: #5A5A40;
+    --text-900: #4A4A35;
+    background-color: var(--bg-50);
+    color: #1A1A1A;
+  }
+
+  .dark {
+    --bg-50: #1C1C16;
+    --bg-100: #282823;
+    --bg-200: #3C3C32;
+    --text-800: #D4D4B8;
+    --text-900: #ECECDE;
+    background-color: var(--bg-50);
+    color: #E6E2D3;
+  }
+  
   body {
-    @apply bg-natural-50 text-[#1A1A1A] antialiased;
+    @apply antialiased transition-colors duration-300;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }

@@ -23,13 +23,27 @@ import {
   ArrowRight,
   TrendingUp,
   MapPin,
-  ChevronLeft
+  ChevronLeft,
+  Moon,
+  Sun,
+  Shield,
+  FileText,
+  Camera,
+  Fingerprint,
+  Globe,
+  Calendar,
+  Filter,
+  X,
+  CreditCard,
+  FileDigit,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Types ---
 
 type Role = 'SENDER' | 'BENEFICIARY' | 'MERCHANT';
+type ViewState = 'DASHBOARD' | 'PROFILE' | 'HISTORY' | 'USSD' | 'ONBOARDING';
 
 interface Merchant {
   id: string;
@@ -45,17 +59,20 @@ interface Transaction {
   type: 'RECEIVED' | 'SPENT' | 'SENT';
   category: string;
   merchantName?: string;
+  merchantAddress?: string;
   senderName?: string;
   recipientName?: string;
   date: string;
+  time?: string;
   status: 'COMPLETED' | 'PENDING';
+  notes?: string;
 }
 
 interface AppState {
   role: Role;
   balance: number;
   transactions: Transaction[];
-  credits: { [merchantId: string]: number }; // For conditional credits
+  credits: { [merchantId: string]: number };
 }
 
 // --- Constants & Mock Data ---
@@ -68,9 +85,10 @@ const MERCHANTS: Merchant[] = [
 ];
 
 const INITIAL_TRANSACTIONS: Transaction[] = [
-  { id: 't1', amount: 50000, type: 'SENT', category: 'غذاء', recipientName: 'فاطمة محمد', date: 'منذ ساعتين', status: 'COMPLETED' },
-  { id: 't2', amount: 15000, type: 'SPENT', category: 'دواء', merchantName: 'صيدلية الأمل', date: 'أمس', status: 'COMPLETED' },
-  { id: 't3', amount: 100000, type: 'RECEIVED', category: 'رصيد مفتوح', senderName: 'أحمد (السعودية)', date: 'قبل ٣ أيام', status: 'COMPLETED' },
+  { id: 't1', amount: 50000, type: 'SENT', category: 'غذاء', recipientName: 'فاطمة محمد', date: 'منذ ساعتين', time: '14:30', status: 'COMPLETED', notes: 'مصروف البيت الشهري' },
+  { id: 't2', amount: 15000, type: 'SPENT', category: 'دواء', merchantName: 'صيدلية الأمل', merchantAddress: 'حي الروضة، تعز', date: 'أمس', time: '18:45', status: 'COMPLETED', notes: 'أدوية الضغط' },
+  { id: 't3', amount: 100000, type: 'RECEIVED', category: 'رصيد مفتوح', senderName: 'أحمد (السعودية)', date: 'قبل ٣ أيام', time: '09:00', status: 'COMPLETED' },
+  { id: 't4', amount: 20000, type: 'SPENT', category: 'وقود', merchantName: 'محطة النور', merchantAddress: 'طريق الميناء، عدن', date: 'قبل ٤ أيام', time: '16:20', status: 'COMPLETED' },
 ];
 
 // --- Utilities ---
@@ -85,42 +103,297 @@ const formatYER = (val: number) => {
 
 // --- Components ---
 
-const Navbar = ({ role, setRole }: { role: Role, setRole: (r: Role) => void }) => {
+const Navbar = ({ role, setRole, isDark, setIsDark, setView }: { role: Role, setRole: (r: Role) => void, isDark: boolean, setIsDark: (b: boolean) => void, setView: (v: ViewState) => void }) => {
   return (
-    <nav className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-natural-200 px-4 flex items-center justify-between z-50 transition-all duration-300 shadow-sm" dir="rtl">
-      <div className="flex items-center gap-2">
+    <nav className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-natural-100 border-b border-natural-200 px-4 flex items-center justify-between z-50 transition-all duration-300 shadow-sm" dir="rtl">
+      <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('DASHBOARD')}>
         <div className="bg-natural-800 p-2 rounded-xl text-white">
           <ArrowLeftRight size={24} />
         </div>
         <span className="text-xl font-bold text-natural-800 tracking-tight">حوِّل</span>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
+        <button onClick={() => setIsDark(!isDark)} className="text-natural-800 p-2 hover:bg-natural-200 rounded-full transition-colors">
+          {isDark ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
         <select 
           value={role} 
-          onChange={(e) => setRole(e.target.value as Role)}
-          className="bg-natural-100 text-natural-800 text-sm py-1.5 px-3 rounded-full border border-natural-200 outline-none focus:ring-2 focus:ring-natural-800 transition-all"
+          onChange={(e) => { setRole(e.target.value as Role); setView('DASHBOARD'); }}
+          className="bg-natural-100 dark:bg-natural-200 text-natural-800 text-sm py-1.5 px-3 rounded-full border border-natural-200 outline-none focus:ring-2 focus:ring-natural-800 transition-all cursor-pointer"
         >
           <option value="SENDER">مغترب (مرسل)</option>
           <option value="BENEFICIARY">أهل (مستفيد)</option>
           <option value="MERCHANT">تاجر (وكيل)</option>
         </select>
-        <button className="text-natural-800 p-2 hover:bg-natural-100 rounded-full transition-colors relative">
+        <button className="text-natural-800 p-2 hover:bg-natural-100 dark:hover:bg-natural-200 rounded-full transition-colors relative">
           <Bell size={20} />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full animate-pulse border-2 border-white"></span>
+          <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full animate-pulse border-2 border-white dark:border-natural-100"></span>
         </button>
       </div>
     </nav>
   );
 };
 
+// --- Shared Components ---
+
+const TransactionDetailsModal = ({ tx, onClose }: { tx: Transaction, onClose: () => void }) => (
+  <AnimatePresence>
+    <motion.div 
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-natural-800/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ y: 100, scale: 0.9 }} animate={{ y: 0, scale: 1 }} exit={{ y: 100, scale: 0.9 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md bg-white dark:bg-natural-50 rounded-[40px] p-8 shadow-2xl relative"
+      >
+        <button onClick={onClose} className="absolute top-6 left-6 text-gray-400 p-2 hover:bg-natural-100 rounded-full transition-colors">
+          <X size={24} />
+        </button>
+        <div className="flex flex-col items-center text-center">
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${tx.type === 'RECEIVED' ? 'bg-emerald-100 text-emerald-600' : tx.type === 'SENT' ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
+            {tx.type === 'RECEIVED' ? <ArrowRight className="rotate-45" size={32} /> : tx.type === 'SENT' ? <Send size={32} /> : <ShoppingCart size={32} />}
+          </div>
+          <h3 className="text-2xl font-bold text-natural-900 mb-1">{formatYER(tx.amount)}</h3>
+          <p className="text-sm font-medium text-gray-500 mb-6">{tx.type === 'RECEIVED' ? 'تحويل وارد' : tx.type === 'SENT' ? 'حوالة صادرة' : 'عملية شراء'}</p>
+          
+          <div className="w-full bg-natural-100 rounded-2xl p-4 text-right space-y-3">
+            <div className="flex justify-between border-b border-natural-200 pb-2">
+              <span className="text-xs text-gray-500">التاريخ والوقت</span>
+              <span className="text-sm font-bold">{tx.date} • {tx.time || '10:00'}</span>
+            </div>
+            {tx.merchantName && (
+              <div className="flex justify-between border-b border-natural-200 pb-2">
+                <span className="text-xs text-gray-500">التاجر</span>
+                <span className="text-sm font-bold text-natural-800">{tx.merchantName}</span>
+              </div>
+            )}
+            {tx.merchantAddress && (
+              <div className="flex justify-between border-b border-natural-200 pb-2">
+                <span className="text-xs text-gray-500">العنوان</span>
+                <span className="text-sm font-bold">{tx.merchantAddress}</span>
+              </div>
+            )}
+            {tx.recipientName && (
+              <div className="flex justify-between border-b border-natural-200 pb-2">
+                <span className="text-xs text-gray-500">المستفيد</span>
+                <span className="text-sm font-bold">{tx.recipientName}</span>
+              </div>
+            )}
+            <div className="flex justify-between border-b border-natural-200 pb-2">
+              <span className="text-xs text-gray-500">التصنيف</span>
+              <span className="text-sm font-bold bg-white px-2 py-0.5 rounded-md">{tx.category}</span>
+            </div>
+            {tx.notes && (
+              <div className="flex justify-between">
+                <span className="text-xs text-gray-500">ملاحظات</span>
+                <span className="text-sm font-medium italic">{tx.notes}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  </AnimatePresence>
+);
+
+const ProfileView = ({ role }: { role: Role }) => {
+  return (
+    <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
+      <header className="text-center mb-8">
+        <div className="w-24 h-24 bg-natural-200 rounded-full mx-auto mb-4 flex items-center justify-center border-4 border-white shadow-md relative">
+          <User size={40} className="text-natural-800" />
+          <div className="absolute bottom-0 right-0 bg-natural-800 text-white p-1.5 rounded-full border-2 border-white cursor-pointer">
+            <Camera size={14} />
+          </div>
+        </div>
+        <h2 className="text-2xl font-bold text-natural-900">
+          {role === 'SENDER' ? 'محمد المغترب' : role === 'BENEFICIARY' ? 'هند أحمد' : 'الحاج جمال'}
+        </h2>
+        <p className="text-gray-500 text-sm">
+          {role === 'SENDER' ? 'السعودية - مكة مكرمة' : role === 'BENEFICIARY' ? 'اليمن - صنعاء' : 'تاجر جملة - بقالة مواد غذائية'}
+        </p>
+      </header>
+
+      <div className="bg-white rounded-3xl p-5 border border-natural-200 space-y-4">
+        <h3 className="font-bold text-natural-800 border-b border-natural-100 pb-2">البيانات الشخصية</h3>
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <label className="text-xs text-gray-400">رقم الهاتف المرتبط</label>
+            <p className="text-sm font-bold" dir="ltr">+967 77X XXX XXX</p>
+          </div>
+          {role === 'MERCHANT' && (
+            <div>
+              <label className="text-xs text-gray-400">السجل التجاري</label>
+              <p className="text-sm font-bold">123456789 (موثق <CheckCircle2 size={12} className="inline text-emerald-600" />)</p>
+            </div>
+          )}
+          <div>
+             <label className="text-xs text-gray-400">الحالة الأمنية (KYC)</label>
+             <div className="flex items-center gap-2 mt-1">
+               <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1">
+                 <Shield size={12}/> تم التحقق من الهوية
+               </span>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl p-2 border border-natural-200">
+        <button className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
+          <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Fingerprint size={20} /></div>
+          <div className="flex-1 font-medium">البصمة والأمان</div>
+          <ChevronLeft size={16} className="text-gray-400" />
+        </button>
+        <button className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
+          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><FileText size={20} /></div>
+          <div className="flex-1 font-medium">تحديث بيانات الهوية</div>
+          <ChevronLeft size={16} className="text-gray-400" />
+        </button>
+        <button className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
+          <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><Globe size={20} /></div>
+          <div className="flex-1 font-medium">اللغة والإشعارات</div>
+          <ChevronLeft size={16} className="text-gray-400" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const USSDSimulator = ({ onClose }: { onClose: () => void }) => {
+  const [input, setInput] = useState('');
+  const [output, setOutput] = useState('مرحباً بك في خدمة حوِّل USSD\n\n1. الاستعلام عن الرصيد\n2. سداد مشتريات (للتاجر)\n3. إشِعارات\n\nأدخل الرقم:');
+  const [step, setStep] = useState(0);
+
+  const handleSend = () => {
+    if (step === 0 && input === '1') {
+      setOutput('رصيدك الحالي:\nرصيد عام: ١٠٠،٠٠٠ ر.ي\nرصيد البقالة: ٨٥،٠٠٠ ر.ي\n\n0. رجوع');
+      setStep(1);
+    } else if (step === 0 && input === '2') {
+      setOutput('أدخل كود التاجر:');
+      setStep(2);
+    } else if (step === 2) {
+      setOutput(`جاري الدفع للتاجر ${input}...\n\nأدخل المبلغ:`);
+      setStep(3);
+    } else if (step === 3) {
+      setOutput(`تم خصم ${input} ر.ي بنجاح.\n\nرقم العملية: 123456\n\n0. للقائمة الرئيسية`);
+      setStep(1);
+    } else if (input === '0') {
+      setOutput('مرحباً بك في خدمة حوِّل USSD\n\n1. الاستعلام عن الرصيد\n2. سداد مشتريات (للتاجر)\n3. إشِعارات\n\nأدخل الرقم:');
+      setStep(0);
+    } else {
+      setOutput('إدخال غير صحيح.\n0. رجوع');
+    }
+    setInput('');
+  };
+
+  return (
+    <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
+      <header className="mb-4">
+        <h2 className="text-2xl font-bold text-natural-900 mb-1">محاكي USSD</h2>
+        <p className="text-sm text-gray-500">جرب تجربة الخدمة بدون إنترنت عبر أرقامUSSD مثل #123*</p>
+      </header>
+
+      <div className="bg-black text-green-400 font-mono p-6 rounded-[32px] min-h-[300px] flex flex-col shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-8 bg-gray-900 flex items-center px-4 justify-between" dir="ltr">
+          <div className="flex gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500" onClick={onClose} />
+            <div className="w-3 h-3 rounded-full bg-yellow-500" />
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+          </div>
+          <span className="text-[10px] text-gray-400">Terminal</span>
+        </div>
+        
+        <div className="mt-8 flex-1 whitespace-pre-wrap leading-relaxed text-sm">
+          {output}
+        </div>
+        
+        <div className="mt-4 flex gap-2">
+          <input 
+            type="text" 
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="flex-1 bg-transparent border-b border-green-700 outline-none text-green-400 font-mono"
+            placeholder="أدخل..."
+            autoFocus
+          />
+          <button onClick={handleSend} className="bg-green-800 text-white px-4 py-1.5 rounded-lg text-sm font-bold">إرسال</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MerchantOnboarding = ({ setView }: { setView: (v: ViewState) => void }) => {
+  const [step, setStep] = useState(1);
+  return (
+    <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
+      <div className="bg-white rounded-3xl p-6 border border-natural-200 shadow-sm relative overflow-hidden">
+        {step === 1 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+            <h2 className="text-2xl font-bold text-natural-900 mb-2">تسجيل تاجر جديد</h2>
+            <p className="text-sm text-gray-500">انضم إلى شبكة حوِّل كوكيل معتمد وابدأ في استقبال المدفوعات بسلاسة.</p>
+            <div className="space-y-3 mt-6">
+              <input type="text" placeholder="الاسم التجاري" className="w-full bg-natural-50 border p-3 rounded-xl outline-none focus:border-natural-800" />
+              <select className="w-full bg-natural-50 border p-3 rounded-xl outline-none focus:border-natural-800">
+                <option>بقالة / مواد غذائية</option>
+                <option>صيدلية / طبي</option>
+                <option>محطة وقود</option>
+                <option>تعليم</option>
+              </select>
+              <input type="text" placeholder="عنوان النشاط" className="w-full bg-natural-50 border p-3 rounded-xl outline-none focus:border-natural-800" />
+            </div>
+            <button onClick={() => setStep(2)} className="w-full bg-natural-800 text-white p-4 rounded-xl font-bold mt-6 hover:bg-natural-900">التالي: التحقق</button>
+          </motion.div>
+        )}
+        {step === 2 && (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+            <h2 className="text-xl font-bold text-natural-900 mb-2">التحقق من الهوية والسجل</h2>
+            <div className="border-2 border-dashed border-natural-200 p-6 rounded-2xl flex flex-col items-center justify-center text-gray-400 bg-natural-50 hover:bg-natural-100 transition-colors cursor-pointer">
+              <Camera size={32} className="mb-2" />
+              <p className="text-sm font-bold">التقط صورة للسجل التجاري</p>
+            </div>
+            <div className="border-2 border-dashed border-natural-200 p-6 rounded-2xl flex flex-col items-center justify-center text-gray-400 bg-natural-50 hover:bg-natural-100 transition-colors cursor-pointer">
+              <FileDigit size={32} className="mb-2" />
+              <p className="text-sm font-bold">التقط صورة للهوية أو جواز السفر</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setStep(1)} className="flex-1 bg-natural-100 text-natural-800 p-4 rounded-xl font-bold">رجوع</button>
+              <button onClick={() => setStep(3)} className="flex-[2] bg-natural-800 text-white p-4 rounded-xl font-bold">متابعة</button>
+            </div>
+          </motion.div>
+        )}
+        {step === 3 && (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+            <h2 className="text-xl font-bold text-natural-900 mb-2">العمولة وبدء العمل</h2>
+            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 mb-4">
+              <h3 className="font-bold text-emerald-800 mb-2">هيكل العمولات الخاص بك</h3>
+              <ul className="text-sm space-y-2 text-emerald-700">
+                <li>• عمولة ١٪ على المبيعات العامة</li>
+                <li>• عمولة ٠.٥٪ على المبيعات المشترطة (بحسب الفئة)</li>
+                <li>• تسوية فورية للرصيد عند الطلب</li>
+              </ul>
+            </div>
+            <button onClick={() => setView('DASHBOARD')} className="w-full bg-natural-800 text-white p-4 rounded-xl font-bold hover:bg-natural-900">
+              موافق والذهاب للوحة التحكم
+            </button>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- Views ---
 
-const SenderDashboard = () => {
+const SenderDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void }) => {
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
   const [selectedMerchant, setSelectedMerchant] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [filterType, setFilterType] = useState<'ALL' | 'SENT' | 'RECEIVED' | 'SPENT'>('ALL');
 
   const handleSend = () => {
     setIsSuccess(true);
@@ -131,6 +404,8 @@ const SenderDashboard = () => {
       setSelectedMerchant(null);
     }, 3000);
   };
+
+  const filteredTx = INITIAL_TRANSACTIONS.filter(t => filterType === 'ALL' || t.type === filterType);
 
   return (
     <div className="space-y-6 pt-20" dir="rtl">
@@ -264,13 +539,18 @@ const SenderDashboard = () => {
 
       {/* History */}
       <div className="px-4 pb-10">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-bold text-gray-900">العمليات الأخيرة</h2>
-          <button className="text-natural-800 text-sm font-medium">عرض الكل</button>
+          <div className="flex gap-2">
+             <select value={filterType} onChange={e => setFilterType(e.target.value as any)} className="bg-white border text-xs border-natural-200 p-1.5 rounded-lg outline-none text-natural-800 focus:ring-1 focus:ring-natural-800">
+               <option value="ALL">الكل</option>
+               <option value="SENT">صادر</option>
+             </select>
+          </div>
         </div>
         <div className="space-y-3">
-          {INITIAL_TRANSACTIONS.filter(t => t.type === 'SENT').map(t => (
-            <div key={t.id} className="bg-white border border-natural-200 p-4 rounded-3xl flex items-center justify-between group hover:shadow-md transition-shadow">
+          {filteredTx.filter(t => t.type === 'SENT').map(t => (
+            <div key={t.id} onClick={() => onSelectTx(t)} className="bg-white border border-natural-200 p-4 rounded-3xl flex items-center justify-between group hover:shadow-md transition-shadow cursor-pointer">
                <div className="flex items-center gap-3">
                  <div className="w-12 h-12 bg-natural-100 rounded-2xl flex items-center justify-center text-natural-800 group-hover:bg-natural-200 transition-colors">
                    <User size={24} />
@@ -285,14 +565,18 @@ const SenderDashboard = () => {
                </div>
             </div>
           ))}
+          {filteredTx.length === 0 && <p className="text-center text-gray-400 text-sm py-4">لا توجد عمليات</p>}
         </div>
       </div>
     </div>
   );
 };
 
-const BeneficiaryDashboard = () => {
+const BeneficiaryDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void }) => {
   const [showQR, setShowQR] = useState(false);
+  const [filterType, setFilterType] = useState<'ALL' | 'RECEIVED' | 'SPENT'>('ALL');
+
+  const filteredTx = INITIAL_TRANSACTIONS.filter(t => filterType === 'ALL' || t.type === filterType);
 
   return (
     <div className="space-y-6 pt-20" dir="rtl">
@@ -319,7 +603,7 @@ const BeneficiaryDashboard = () => {
               <Wallet size={16} /> رصيدك المتاح
             </h3>
             <p className="text-4xl font-bold flex items-baseline gap-2 font-mono">
-              ١٨٥،٠٠٠ <span className="text-sm opacity-70">ر.ي</span>
+               ١٨٥،٠٠٠ <span className="text-sm opacity-70">ر.ي</span>
             </p>
             
             <div className="mt-8 grid grid-cols-2 gap-4 border-t border-white/10 pt-6">
@@ -379,13 +663,19 @@ const BeneficiaryDashboard = () => {
       <div className="px-4 pb-20">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-gray-900">سجل المصاريف</h2>
-          <button className="text-natural-800 text-sm font-medium">عرض الفواتير</button>
+          <div className="flex gap-2">
+             <select value={filterType} onChange={e => setFilterType(e.target.value as any)} className="bg-white border text-xs border-natural-200 p-1.5 rounded-lg outline-none text-natural-800 focus:ring-1 focus:ring-natural-800">
+               <option value="ALL">الكل</option>
+               <option value="RECEIVED">وارد</option>
+               <option value="SPENT">مشتريات</option>
+             </select>
+          </div>
         </div>
         <div className="space-y-4">
-          {INITIAL_TRANSACTIONS.filter(t => t.type !== 'SENT').map(t => (
-            <div key={t.id} className="flex items-center justify-between">
+          {filteredTx.map(t => (
+            <div key={t.id} onClick={() => onSelectTx(t)} className="flex items-center justify-between bg-white p-3 rounded-2xl border border-transparent hover:border-natural-200 cursor-pointer transition-colors shadow-sm">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${t.type === 'RECEIVED' ? 'bg-natural-100 text-natural-800' : 'bg-rose-50 text-rose-600'}`}>
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${t.type === 'RECEIVED' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                   {t.type === 'RECEIVED' ? <ArrowRight className="rotate-45" /> : <ShoppingCart />}
                 </div>
                 <div>
@@ -393,11 +683,12 @@ const BeneficiaryDashboard = () => {
                   <p className="text-[10px] text-gray-400">{t.date} • {t.category}</p>
                 </div>
               </div>
-              <div className={`font-bold text-sm ${t.type === 'RECEIVED' ? 'text-natural-800' : 'text-gray-900'}`}>
+              <div className={`font-bold text-sm ${t.type === 'RECEIVED' ? 'text-emerald-600' : 'text-gray-900'}`}>
                 {t.type === 'RECEIVED' ? '+' : '-'}{formatYER(t.amount)}
               </div>
             </div>
           ))}
+          {filteredTx.length === 0 && <p className="text-center text-gray-400 text-sm py-4">لا توجد عمليات</p>}
         </div>
       </div>
 
@@ -447,9 +738,20 @@ const BeneficiaryDashboard = () => {
   );
 };
 
-const MerchantDashboard = () => {
+const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void }) => {
   const [checkoutAmount, setCheckoutAmount] = useState('');
   const [success, setSuccess] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const sampleRecentSales = [
+    { name: 'فاطمة محمد', time: 'منذ 5 دقائق', amount: 4500, txMock: INITIAL_TRANSACTIONS[0] },
+    { name: 'خديجة علي', time: 'منذ 20 دقيقة', amount: 6500, txMock: INITIAL_TRANSACTIONS[1] },
+    { name: 'آمنة سالم', time: 'منذ 35 دقيقة', amount: 8500, txMock: INITIAL_TRANSACTIONS[3] },
+  ];
+
+  const filteredSales = sampleRecentSales.filter(sale => 
+    sale.name.includes(searchQuery) || String(sale.amount).includes(searchQuery)
+  );
 
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
@@ -536,7 +838,7 @@ const MerchantDashboard = () => {
                   <p className="text-lg font-bold text-natural-800">٧٠،٠٠٠ ر.ي</p>
                 </div>
               </motion.div>
-            )}
+             )}
           </AnimatePresence>
         </div>
       </div>
@@ -557,25 +859,35 @@ const MerchantDashboard = () => {
       <div className="px-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-gray-900">آخر المبيعات</h2>
-          <button className="text-gray-400"><Search size={20}/></button>
+          <div className="relative">
+             <input 
+               type="text" 
+               placeholder="بحث بالاسم أو المبلغ"
+               value={searchQuery}
+               onChange={e => setSearchQuery(e.target.value)}
+               className="bg-white border border-natural-200 text-xs py-1.5 px-3 pr-8 rounded-full outline-none focus:border-natural-800 w-40"
+             />
+             <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          </div>
         </div>
         <div className="space-y-2">
-          {['فاطمة محمد', 'خديجة علي', 'آمنة سالم'].map((name, i) => (
-            <div key={i} className="bg-white border border-natural-200 p-4 rounded-2xl flex items-center justify-between transition-shadow hover:shadow-sm">
+          {filteredSales.map((sale, i) => (
+            <div key={i} onClick={() => onSelectTx(sale.txMock)} className="bg-white border border-natural-200 p-4 rounded-2xl flex items-center justify-between transition-shadow hover:shadow-sm cursor-pointer">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-natural-100 rounded-full flex items-center justify-center text-natural-800 font-bold text-xs uppercase">
-                  {name[0]}
+                  {sale.name[0]}
                 </div>
                 <div>
-                  <p className="font-bold text-gray-900 text-sm">{name}</p>
-                  <p className="text-[10px] text-gray-400">منذ {5 + i * 15} دقيقة</p>
+                  <p className="font-bold text-gray-900 text-sm">{sale.name}</p>
+                  <p className="text-[10px] text-gray-400">{sale.time}</p>
                 </div>
               </div>
               <div className="font-bold text-sm text-gray-900">
-                {formatYER(4500 + i * 2000)}
+                {formatYER(sale.amount)}
               </div>
             </div>
           ))}
+          {filteredSales.length === 0 && <p className="text-xs text-gray-500 text-center py-4">لا توجد نتائج</p>}
         </div>
       </div>
 
@@ -597,16 +909,27 @@ const MerchantDashboard = () => {
 
 export default function App() {
   const [role, setRole] = useState<Role>('SENDER');
+  const [view, setView] = useState<ViewState>('DASHBOARD');
   const [isLoading, setIsLoading] = useState(true);
+  const [isDark, setIsDark] = useState(false);
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1200);
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDark]);
+
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-natural-50 flex flex-col items-center justify-center space-y-4" dir="rtl">
+      <div className="min-h-screen bg-natural-50 dark:bg-natural-100 flex flex-col items-center justify-center space-y-4" dir="rtl">
         <motion.div 
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -615,10 +938,8 @@ export default function App() {
           <ArrowLeftRight size={48} />
         </motion.div>
         <motion.p 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="text-natural-800 font-bold text-xl tracking-tighter"
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
+          className="text-natural-800 dark:text-natural-800 font-bold text-xl tracking-tighter"
         >
           حوِّل - جاري التحميل...
         </motion.p>
@@ -626,53 +947,78 @@ export default function App() {
     );
   }
 
+  const renderView = () => {
+    if (view === 'PROFILE') return <ProfileView role={role} />;
+    if (view === 'USSD') return <USSDSimulator onClose={() => setView('DASHBOARD')} />;
+    if (view === 'ONBOARDING') return <MerchantOnboarding setView={setView} />;
+    
+    if (role === 'SENDER') return <SenderDashboard onSelectTx={setSelectedTx} />;
+    if (role === 'BENEFICIARY') return <BeneficiaryDashboard onSelectTx={setSelectedTx} />;
+    if (role === 'MERCHANT') return <MerchantDashboard onSelectTx={setSelectedTx} />;
+    return null;
+  };
+
   return (
-    <div className="min-h-screen bg-natural-50 text-[#1A1A1A] selection:bg-natural-200 font-sans" dir="rtl">
-      <Navbar role={role} setRole={setRole} />
+    <div className="min-h-screen bg-natural-50 dark:bg-natural-100 text-[#1A1A1A] dark:text-natural-900 selection:bg-natural-200 font-sans" dir="rtl">
+      <Navbar role={role} setRole={setRole} isDark={isDark} setIsDark={setIsDark} setView={setView} />
       
       <main className="max-w-md mx-auto min-h-screen pb-24 relative">
         <AnimatePresence mode="wait">
           <motion.div
-            key={role}
-            initial={{ opacity: 0, x: role === 'SENDER' ? 20 : -20 }}
-            animate={{ opacity: 1, x: 0 }}
+            key={`${role}-${view}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
           >
-            {role === 'SENDER' && <SenderDashboard />}
-            {role === 'BENEFICIARY' && <BeneficiaryDashboard />}
-            {role === 'MERCHANT' && <MerchantDashboard />}
+            {renderView()}
           </motion.div>
         </AnimatePresence>
 
-        {/* Floating Role Switcher Labels for clarity */}
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md px-6 py-3 rounded-full border border-natural-200 shadow-md flex items-center gap-6 z-[60]">
+        {/* Global Bottom Navigation */}
+        <div className="fixed bottom-4 pb-safe left-1/2 -translate-x-1/2 bg-white/90 dark:bg-natural-50/90 backdrop-blur-md px-6 py-3 rounded-[32px] border border-natural-200 dark:border-natural-100 shadow-xl flex items-center gap-8 z-[60]">
           <button 
-             onClick={() => setRole('SENDER')}
-             className={`flex flex-col items-center gap-1 transition-all ${role === 'SENDER' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hober:text-gray-600'}`}
+             onClick={() => setView('DASHBOARD')}
+             className={`flex flex-col items-center gap-1 transition-all ${view === 'DASHBOARD' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hover:text-gray-600'}`}
           >
-            <History size={20} />
-            <span className="text-[10px]">المرسل</span>
+            {role === 'SENDER' ? <Send size={24} /> : role === 'BENEFICIARY' ? <Wallet size={24} /> : <Store size={24} />}
+            <span className="text-[10px]">{role === 'SENDER' ? 'إرسال' : role === 'BENEFICIARY' ? 'محفظتي' : 'المتجر'}</span>
           </button>
+          
+          {role === 'BENEFICIARY' && (
+            <button 
+               onClick={() => setView('USSD')}
+               className={`flex flex-col items-center gap-1 transition-all ${view === 'USSD' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              <Smartphone size={24} />
+              <span className="text-[10px]">USSD</span>
+            </button>
+          )}
+
+          {role === 'MERCHANT' && (
+            <button 
+               onClick={() => setView('ONBOARDING')}
+               className={`flex flex-col items-center gap-1 transition-all ${view === 'ONBOARDING' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              <FileDigit size={24} />
+              <span className="text-[10px]">التسجيل</span>
+            </button>
+          )}
+
           <button 
-             onClick={() => setRole('BENEFICIARY')}
-             className={`flex flex-col items-center gap-1 transition-all ${role === 'BENEFICIARY' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hober:text-gray-600'}`}
+             onClick={() => setView('PROFILE')}
+             className={`flex flex-col items-center gap-1 transition-all ${view === 'PROFILE' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hover:text-gray-600'}`}
           >
-            <Wallet size={20} />
-            <span className="text-[10px]">المستفيد</span>
-          </button>
-          <button 
-             onClick={() => setRole('MERCHANT')}
-             className={`flex flex-col items-center gap-1 transition-all ${role === 'MERCHANT' ? 'text-natural-800 font-bold scale-110' : 'text-gray-400 hober:text-gray-600'}`}
-          >
-            <Store size={20} />
-            <span className="text-[10px]">التاجر</span>
+            <User size={24} />
+            <span className="text-[10px]">حسابي</span>
           </button>
         </div>
       </main>
 
+      {selectedTx && <TransactionDetailsModal tx={selectedTx} onClose={() => setSelectedTx(null)}/>}
+
       {/* Decorative background elements */}
-      <div className="fixed top-0 left-0 w-full h-1/2 bg-gradient-to-b from-natural-100/50 to-transparent -z-10 pointer-events-none"></div>
+      <div className="fixed top-0 left-0 w-full h-1/2 bg-gradient-to-b from-natural-100/50 dark:from-natural-200/20 to-transparent -z-10 pointer-events-none"></div>
     </div>
   );
 }
