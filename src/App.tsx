@@ -36,14 +36,19 @@ import {
   X,
   CreditCard,
   FileDigit,
-  Download
+  Download,
+  Settings,
+  Star,
+  MessageSquareWarning,
+  Clock,
+  Image as ImageIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Types ---
 
 type Role = 'SENDER' | 'BENEFICIARY' | 'MERCHANT';
-type ViewState = 'DASHBOARD' | 'PROFILE' | 'HISTORY' | 'USSD' | 'ONBOARDING';
+type ViewState = 'DASHBOARD' | 'PROFILE' | 'HISTORY' | 'USSD' | 'ONBOARDING' | 'SETTINGS' | 'NOTIFICATIONS';
 
 interface Merchant {
   id: string;
@@ -51,6 +56,8 @@ interface Merchant {
   category: 'GROCERY' | 'PHARMACY' | 'FUEL' | 'SCHOOL' | 'OTHER';
   address: string;
   image?: string;
+  tier?: 'BRONZE' | 'SILVER' | 'GOLD';
+  rating?: number;
 }
 
 interface Transaction {
@@ -64,8 +71,18 @@ interface Transaction {
   recipientName?: string;
   date: string;
   time?: string;
-  status: 'COMPLETED' | 'PENDING';
+  status: 'COMPLETED' | 'PENDING' | 'DISPUTED';
   notes?: string;
+  disputeReason?: string;
+}
+
+interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  time: string;
+  read: boolean;
+  type: 'TRANSACTION' | 'SYSTEM' | 'SECURITY';
 }
 
 interface AppState {
@@ -91,6 +108,12 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
   { id: 't4', amount: 20000, type: 'SPENT', category: 'وقود', merchantName: 'محطة النور', merchantAddress: 'طريق الميناء، عدن', date: 'قبل ٤ أيام', time: '16:20', status: 'COMPLETED' },
 ];
 
+const INITIAL_NOTIFICATIONS: Notification[] = [
+  { id: 'n1', title: 'حوالة واردة', message: 'تم استلام ١٠٠،٠٠٠ ر.ي من أحمد', time: 'منذ ساعتين', read: false, type: 'TRANSACTION' },
+  { id: 'n2', title: 'عملية شراء', message: 'تم خصم ١٥،٠٠٠ ر.ي لصالح صيدلية الأمل', time: 'أمس', read: true, type: 'TRANSACTION' },
+  { id: 'n3', title: 'تنبيه أمني', message: 'تم تسجيل دخول جديد من جهاز آخر', time: 'قبل ٣ أيام', read: true, type: 'SECURITY' },
+];
+
 // --- Utilities ---
 
 const formatYER = (val: number) => {
@@ -103,7 +126,7 @@ const formatYER = (val: number) => {
 
 // --- Components ---
 
-const Navbar = ({ role, setRole, isDark, setIsDark, setView }: { role: Role, setRole: (r: Role) => void, isDark: boolean, setIsDark: (b: boolean) => void, setView: (v: ViewState) => void }) => {
+const Navbar = ({ role, setRole, isDark, setIsDark, setView, unreadCount }: { role: Role, setRole: (r: Role) => void, isDark: boolean, setIsDark: (b: boolean) => void, setView: (v: ViewState) => void, unreadCount: number }) => {
   return (
     <nav className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-natural-100 border-b border-natural-200 px-4 flex items-center justify-between z-50 transition-all duration-300 shadow-sm" dir="rtl">
       <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('DASHBOARD')}>
@@ -114,6 +137,9 @@ const Navbar = ({ role, setRole, isDark, setIsDark, setView }: { role: Role, set
       </div>
 
       <div className="flex items-center gap-3">
+        <button onClick={() => setView('SETTINGS')} className="text-natural-800 p-2 hover:bg-natural-200 rounded-full transition-colors hidden sm:block">
+          <Settings size={20} />
+        </button>
         <button onClick={() => setIsDark(!isDark)} className="text-natural-800 p-2 hover:bg-natural-200 rounded-full transition-colors">
           {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>
@@ -126,9 +152,11 @@ const Navbar = ({ role, setRole, isDark, setIsDark, setView }: { role: Role, set
           <option value="BENEFICIARY">أهل (مستفيد)</option>
           <option value="MERCHANT">تاجر (وكيل)</option>
         </select>
-        <button className="text-natural-800 p-2 hover:bg-natural-100 dark:hover:bg-natural-200 rounded-full transition-colors relative">
+        <button onClick={() => setView('NOTIFICATIONS')} className="text-natural-800 p-2 hover:bg-natural-100 dark:hover:bg-natural-200 rounded-full transition-colors relative">
           <Bell size={20} />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full animate-pulse border-2 border-white dark:border-natural-100"></span>
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-1 w-3 h-3 bg-rose-500 rounded-full animate-pulse border-2 border-white dark:border-natural-100 flex items-center justify-center text-[8px] text-white font-bold">{unreadCount}</span>
+          )}
         </button>
       </div>
     </nav>
@@ -137,69 +165,114 @@ const Navbar = ({ role, setRole, isDark, setIsDark, setView }: { role: Role, set
 
 // --- Shared Components ---
 
-const TransactionDetailsModal = ({ tx, onClose }: { tx: Transaction, onClose: () => void }) => (
-  <AnimatePresence>
-    <motion.div 
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-natural-800/60 backdrop-blur-sm"
-      onClick={onClose}
-    >
+const TransactionDetailsModal = ({ tx, onClose }: { tx: Transaction, onClose: () => void }) => {
+  const [showDispute, setShowDispute] = useState(false);
+  const [disputeSent, setDisputeSent] = useState(false);
+
+  return (
+    <AnimatePresence>
       <motion.div 
-        initial={{ y: 100, scale: 0.9 }} animate={{ y: 0, scale: 1 }} exit={{ y: 100, scale: 0.9 }}
-        onClick={e => e.stopPropagation()}
-        className="w-full max-w-md bg-white dark:bg-natural-50 rounded-[40px] p-8 shadow-2xl relative"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-natural-800/60 backdrop-blur-sm"
+        onClick={onClose}
       >
-        <button onClick={onClose} className="absolute top-6 left-6 text-gray-400 p-2 hover:bg-natural-100 rounded-full transition-colors">
-          <X size={24} />
-        </button>
-        <div className="flex flex-col items-center text-center">
-          <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${tx.type === 'RECEIVED' ? 'bg-emerald-100 text-emerald-600' : tx.type === 'SENT' ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
-            {tx.type === 'RECEIVED' ? <ArrowRight className="rotate-45" size={32} /> : tx.type === 'SENT' ? <Send size={32} /> : <ShoppingCart size={32} />}
-          </div>
-          <h3 className="text-2xl font-bold text-natural-900 mb-1">{formatYER(tx.amount)}</h3>
-          <p className="text-sm font-medium text-gray-500 mb-6">{tx.type === 'RECEIVED' ? 'تحويل وارد' : tx.type === 'SENT' ? 'حوالة صادرة' : 'عملية شراء'}</p>
+        <motion.div 
+          initial={{ y: 100, scale: 0.9 }} animate={{ y: 0, scale: 1 }} exit={{ y: 100, scale: 0.9 }}
+          onClick={e => e.stopPropagation()}
+          className="w-full max-w-md bg-white dark:bg-natural-50 rounded-[40px] p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto hide-scrollbar"
+        >
+          <button onClick={onClose} className="absolute top-6 left-6 text-gray-400 p-2 hover:bg-natural-100 rounded-full transition-colors">
+            <X size={24} />
+          </button>
           
-          <div className="w-full bg-natural-100 rounded-2xl p-4 text-right space-y-3">
-            <div className="flex justify-between border-b border-natural-200 pb-2">
-              <span className="text-xs text-gray-500">التاريخ والوقت</span>
-              <span className="text-sm font-bold">{tx.date} • {tx.time || '10:00'}</span>
+          {showDispute ? (
+            disputeSent ? (
+               <div className="flex flex-col items-center text-center py-8">
+                 <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-4"><CheckCircle2 size={32} /></div>
+                 <h3 className="text-xl font-bold text-natural-900 mb-2">تم رفع الشكوى بنجاح</h3>
+                 <p className="text-sm text-gray-500 mb-6">سيقوم فريق الدعم بمراجعة طلبك والتواصل مع التاجر في أقرب وقت.</p>
+                 <button onClick={onClose} className="w-full bg-natural-100 text-natural-800 p-3 rounded-xl font-bold">إغلاق</button>
+               </div>
+            ) : (
+               <div className="space-y-4">
+                 <h3 className="text-xl font-bold text-natural-900 flex items-center gap-2"><MessageSquareWarning className="text-rose-600" /> إبلاغ عن مشكلة</h3>
+                 <p className="text-sm text-gray-500">يرجى توضيح المشكلة التي واجهتها في هذه العملية للبدء في إجراءات الحل والوساطة.</p>
+                 <div className="space-y-3 mt-4">
+                   <select className="w-full bg-natural-50 border border-natural-200 p-3 rounded-xl outline-none text-sm">
+                     <option>السعر غير صحيح</option>
+                     <option>لم أستلم المنتج/الخدمة</option>
+                     <option>تعامل سيء من التاجر</option>
+                     <option>أخرى</option>
+                   </select>
+                   <textarea placeholder="تفاصيل أكثر (اختياري)..." className="w-full bg-natural-50 border border-natural-200 p-3 rounded-xl outline-none text-sm h-24 resize-none"></textarea>
+                 </div>
+                 <div className="flex gap-2 mt-6">
+                   <button onClick={() => setShowDispute(false)} className="flex-1 bg-natural-100 text-natural-800 p-3 rounded-xl font-bold text-sm">إلغاء</button>
+                   <button onClick={() => setDisputeSent(true)} className="flex-[2] bg-rose-600 text-white p-3 rounded-xl font-bold text-sm">إرسال الشكوى</button>
+                 </div>
+               </div>
+            )
+          ) : (
+            <div className="flex flex-col items-center text-center">
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${tx.type === 'RECEIVED' ? 'bg-emerald-100 text-emerald-600' : tx.type === 'SENT' ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
+                {tx.type === 'RECEIVED' ? <ArrowRight className="rotate-45" size={32} /> : tx.type === 'SENT' ? <Send size={32} /> : <ShoppingCart size={32} />}
+              </div>
+              <h3 className="text-2xl font-bold text-natural-900 mb-1">{formatYER(tx.amount)}</h3>
+              <p className="text-sm font-medium text-gray-500 mb-6">{tx.type === 'RECEIVED' ? 'تحويل وارد' : tx.type === 'SENT' ? 'حوالة صادرة' : 'عملية شراء'}</p>
+              
+              <div className="w-full bg-natural-100 rounded-2xl p-4 text-right space-y-3">
+                <div className="flex justify-between border-b border-natural-200 pb-2">
+                  <span className="text-xs text-gray-500">التاريخ والوقت</span>
+                  <span className="text-sm font-bold">{tx.date} • {tx.time || '10:00'}</span>
+                </div>
+                {tx.merchantName && (
+                  <div className="flex justify-between border-b border-natural-200 pb-2">
+                    <span className="text-xs text-gray-500">التاجر</span>
+                    <span className="text-sm font-bold text-natural-800">{tx.merchantName}</span>
+                  </div>
+                )}
+                {tx.merchantAddress && (
+                  <div className="flex justify-between border-b border-natural-200 pb-2">
+                    <span className="text-xs text-gray-500">العنوان</span>
+                    <span className="text-sm font-bold">{tx.merchantAddress}</span>
+                  </div>
+                )}
+                {tx.recipientName && (
+                  <div className="flex justify-between border-b border-natural-200 pb-2">
+                    <span className="text-xs text-gray-500">المستفيد</span>
+                    <span className="text-sm font-bold">{tx.recipientName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between border-b border-natural-200 pb-2">
+                  <span className="text-xs text-gray-500">التصنيف</span>
+                  <span className="text-sm font-bold bg-white px-2 py-0.5 rounded-md">{tx.category}</span>
+                </div>
+                {tx.notes && (
+                  <div className="flex justify-between">
+                    <span className="text-xs text-gray-500">ملاحظات</span>
+                    <span className="text-sm font-medium italic">{tx.notes}</span>
+                  </div>
+                )}
+              </div>
+              
+              {tx.type === 'SPENT' && (
+                <button onClick={() => setShowDispute(true)} className="mt-6 text-sm font-bold text-rose-600 flex items-center justify-center gap-1 hover:underline">
+                  <AlertCircle size={16} /> لدي مشكلة في هذه العملية
+                </button>
+              )}
             </div>
-            {tx.merchantName && (
-              <div className="flex justify-between border-b border-natural-200 pb-2">
-                <span className="text-xs text-gray-500">التاجر</span>
-                <span className="text-sm font-bold text-natural-800">{tx.merchantName}</span>
-              </div>
-            )}
-            {tx.merchantAddress && (
-              <div className="flex justify-between border-b border-natural-200 pb-2">
-                <span className="text-xs text-gray-500">العنوان</span>
-                <span className="text-sm font-bold">{tx.merchantAddress}</span>
-              </div>
-            )}
-            {tx.recipientName && (
-              <div className="flex justify-between border-b border-natural-200 pb-2">
-                <span className="text-xs text-gray-500">المستفيد</span>
-                <span className="text-sm font-bold">{tx.recipientName}</span>
-              </div>
-            )}
-            <div className="flex justify-between border-b border-natural-200 pb-2">
-              <span className="text-xs text-gray-500">التصنيف</span>
-              <span className="text-sm font-bold bg-white px-2 py-0.5 rounded-md">{tx.category}</span>
-            </div>
-            {tx.notes && (
-              <div className="flex justify-between">
-                <span className="text-xs text-gray-500">ملاحظات</span>
-                <span className="text-sm font-medium italic">{tx.notes}</span>
-              </div>
-            )}
-          </div>
-        </div>
+          )}
+        </motion.div>
       </motion.div>
-    </motion.div>
-  </AnimatePresence>
-);
+    </AnimatePresence>
+  );
+};
 
 const ProfileView = ({ role }: { role: Role }) => {
+  const [showVerification, setShowVerification] = useState(false);
+  const [verificationStep, setVerificationStep] = useState(1);
+  const [verified, setVerified] = useState(false);
+
   return (
     <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
       <header className="text-center mb-8">
@@ -209,8 +282,9 @@ const ProfileView = ({ role }: { role: Role }) => {
             <Camera size={14} />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-natural-900">
+        <h2 className="text-2xl font-bold text-natural-900 flex items-center justify-center gap-2">
           {role === 'SENDER' ? 'محمد المغترب' : role === 'BENEFICIARY' ? 'هند أحمد' : 'الحاج جمال'}
+          {verified && <CheckCircle2 size={20} className="text-emerald-500" />}
         </h2>
         <p className="text-gray-500 text-sm">
           {role === 'SENDER' ? 'السعودية - مكة مكرمة' : role === 'BENEFICIARY' ? 'اليمن - صنعاء' : 'تاجر جملة - بقالة مواد غذائية'}
@@ -225,17 +299,41 @@ const ProfileView = ({ role }: { role: Role }) => {
             <p className="text-sm font-bold" dir="ltr">+967 77X XXX XXX</p>
           </div>
           {role === 'MERCHANT' && (
-            <div>
-              <label className="text-xs text-gray-400">السجل التجاري</label>
-              <p className="text-sm font-bold">123456789 (موثق <CheckCircle2 size={12} className="inline text-emerald-600" />)</p>
-            </div>
+            <>
+              <div>
+                <label className="text-xs text-gray-400">السجل التجاري</label>
+                <p className="text-sm font-bold">123456789 (موثق <CheckCircle2 size={12} className="inline text-emerald-600" />)</p>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">ساعات العمل</label>
+                <p className="text-sm font-bold flex items-center gap-2"><Clock size={16} className="text-gray-400"/> 08:00 صباحاً - 11:00 مساءً</p>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">وصف النشاط</label>
+                <p className="text-sm">سوبر ماركت يوفر جميع احتياجات المنزل من مواد غذائية ومنظفات بأسعار مناسبة.</p>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400">معرض الصور</label>
+                <div className="flex gap-2 mt-2">
+                  <div className="w-16 h-16 bg-natural-100 rounded-xl flex flex-col justify-center items-center text-gray-400 border-2 border-dashed border-natural-200 cursor-pointer"><Plus size={16}/> <ImageIcon size={16}/></div>
+                  <div className="w-16 h-16 bg-natural-200 rounded-xl overflow-hidden"><img src="https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=100&h=100&fit=crop" className="w-full h-full object-cover" /></div>
+                  <div className="w-16 h-16 bg-natural-200 rounded-xl overflow-hidden"><img src="https://images.unsplash.com/photo-1542838132-92c53300491e?w=100&h=100&fit=crop" className="w-full h-full object-cover" /></div>
+                </div>
+              </div>
+            </>
           )}
           <div>
              <label className="text-xs text-gray-400">الحالة الأمنية (KYC)</label>
              <div className="flex items-center gap-2 mt-1">
-               <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1">
-                 <Shield size={12}/> تم التحقق من الهوية
-               </span>
+               {verified ? (
+                 <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1">
+                   <Shield size={12}/> تم التحقق من الهوية
+                 </span>
+               ) : (
+                 <button onClick={() => setShowVerification(true)} className="bg-amber-100 animate-pulse text-amber-700 text-xs px-3 py-1.5 rounded-full font-bold flex items-center gap-1 border border-amber-300">
+                   <AlertCircle size={12}/> اضغط لتوثيق الحساب
+                 </button>
+               )}
              </div>
           </div>
         </div>
@@ -247,17 +345,45 @@ const ProfileView = ({ role }: { role: Role }) => {
           <div className="flex-1 font-medium">البصمة والأمان</div>
           <ChevronLeft size={16} className="text-gray-400" />
         </button>
-        <button className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
+        <button onClick={() => setShowVerification(true)} className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
           <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><FileText size={20} /></div>
-          <div className="flex-1 font-medium">تحديث بيانات الهوية</div>
-          <ChevronLeft size={16} className="text-gray-400" />
-        </button>
-        <button className="flex items-center gap-3 w-full p-3 hover:bg-natural-50 rounded-2xl transition-colors text-right">
-          <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><Globe size={20} /></div>
-          <div className="flex-1 font-medium">اللغة والإشعارات</div>
+          <div className="flex-1 font-medium">{verified ? 'تحديث بيانات الهوية' : 'توثيق الحساب بالهوية'}</div>
           <ChevronLeft size={16} className="text-gray-400" />
         </button>
       </div>
+
+      {showVerification && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 bg-natural-800/60 backdrop-blur-sm" onClick={() => setShowVerification(false)}>
+          <div className="w-full max-w-md bg-white rounded-[40px] p-6 shadow-2xl relative max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+             <button onClick={() => setShowVerification(false)} className="absolute top-4 left-4 p-2 text-gray-400"><X size={24} /></button>
+             
+             {verificationStep === 1 && (
+               <div className="text-center pt-4 pb-2 space-y-4">
+                 <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto"><FileDigit size={32}/></div>
+                 <h3 className="text-xl font-bold">رفع مستند الهوية</h3>
+                 <p className="text-sm text-gray-500">يرجى رفع صورة واضحة لبطاقتك الشخصية أو جواز السفر لضمان أمان حسابك.</p>
+                 <div className="border-2 border-dashed border-natural-200 p-8 rounded-2xl bg-natural-50 my-6 flex flex-col items-center justify-center cursor-pointer hover:bg-natural-100">
+                   <Camera size={32} className="text-gray-400 mb-2" />
+                   <p className="text-sm font-medium">اضغط لالتقاط صورة</p>
+                 </div>
+                 <button onClick={() => setVerificationStep(2)} className="w-full bg-natural-800 text-white p-3 rounded-xl font-bold">التالي</button>
+               </div>
+             )}
+             
+             {verificationStep === 2 && (
+               <div className="text-center pt-4 pb-2 space-y-4">
+                 <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto"><Smartphone size={32}/></div>
+                 <h3 className="text-xl font-bold">التحقق من رقم الهاتف</h3>
+                 <p className="text-sm text-gray-500">أرسلنا كود التحقق (OTP)  في رسالة نصية إلى رقمك المنتهي بـ 1234</p>
+                 <div className="flex gap-2 justify-center my-6" dir="ltr">
+                   {[1,2,3,4].map(i => <input key={i} type="text" maxLength={1} className="w-12 h-14 bg-natural-50 border border-natural-200 rounded-xl text-center font-bold text-xl outline-none focus:border-natural-800" />)}
+                 </div>
+                 <button onClick={() => { setVerified(true); setShowVerification(false); setVerificationStep(1); }} className="w-full bg-natural-800 text-white p-3 rounded-xl font-bold">تأكيد الكود</button>
+               </div>
+             )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -366,14 +492,29 @@ const MerchantOnboarding = ({ setView }: { setView: (v: ViewState) => void }) =>
           </motion.div>
         )}
         {step === 3 && (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4 text-center">
+            <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex mx-auto items-center justify-center mb-2"><Smartphone size={32} className="animate-pulse" /></div>
+            <h2 className="text-xl font-bold text-natural-900 mb-2">المكالمة الصوتية للتحقق</h2>
+            <p className="text-sm text-gray-500">سنقوم بالاتصال برقم هاتفك المسجل لتأكيد هويتك ونشاطك التجاري. يرجى إدخال رمز التحقق الذي سيمليه عليك المجيب الآلي.</p>
+            <div className="flex gap-2 justify-center my-6" dir="ltr">
+               {[1,2,3,4].map(i => <input key={i} type="text" maxLength={1} className="w-12 h-14 bg-natural-50 border border-natural-200 rounded-xl text-center font-bold text-xl outline-none focus:border-natural-800" />)}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setStep(2)} className="flex-1 bg-natural-100 text-natural-800 p-4 rounded-xl font-bold">رجوع</button>
+              <button onClick={() => setStep(4)} className="flex-[2] bg-natural-800 text-white p-4 rounded-xl font-bold">تأكيد الرمز</button>
+            </div>
+          </motion.div>
+        )}
+        {step === 4 && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-            <h2 className="text-xl font-bold text-natural-900 mb-2">العمولة وبدء العمل</h2>
-            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 mb-4">
-              <h3 className="font-bold text-emerald-800 mb-2">هيكل العمولات الخاص بك</h3>
-              <ul className="text-sm space-y-2 text-emerald-700">
-                <li>• عمولة ١٪ على المبيعات العامة</li>
-                <li>• عمولة ٠.٥٪ على المبيعات المشترطة (بحسب الفئة)</li>
-                <li>• تسوية فورية للرصيد عند الطلب</li>
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex mx-auto items-center justify-center mb-2"><CheckCircle2 size={32} /></div>
+            <h2 className="text-xl font-bold text-center text-natural-900 mb-2">اكتمل التحقق بنجاح</h2>
+            <div className="bg-natural-50 p-4 rounded-2xl border border-natural-200 mb-4">
+              <h3 className="font-bold text-natural-800 mb-2">هيكل العمولات الخاص بك</h3>
+              <ul className="text-sm space-y-2 text-natural-700">
+                <li className="flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500"/> البدء بمستوى (برونزي) بعمولة 1%</li>
+                <li className="flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500"/> تخفيض العمولة حتى 0.4% بناءً على الولاء</li>
+                <li className="flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500"/> تسوية دورية مجدولة أو فورية عند الطلب</li>
               </ul>
             </div>
             <button onClick={() => setView('DASHBOARD')} className="w-full bg-natural-800 text-white p-4 rounded-xl font-bold hover:bg-natural-900">
@@ -388,7 +529,7 @@ const MerchantOnboarding = ({ setView }: { setView: (v: ViewState) => void }) =>
 
 // --- Views ---
 
-const SenderDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void }) => {
+const SenderDashboard = ({ onSelectTx, onAddNotification }: { onSelectTx: (tx: Transaction) => void, onAddNotification: (note: Omit<Notification, 'id'>) => void }) => {
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
   const [selectedMerchant, setSelectedMerchant] = useState<string | null>(null);
@@ -397,6 +538,13 @@ const SenderDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void
 
   const handleSend = () => {
     setIsSuccess(true);
+    onAddNotification({
+      title: 'تم إرسال الحوالة',
+      message: `تم إرسال ${formatYER(Number(amount))} بنجاح.`,
+      time: 'الآن',
+      read: false,
+      type: 'TRANSACTION'
+    });
     setTimeout(() => {
       setIsSuccess(false);
       setStep(1);
@@ -738,7 +886,7 @@ const BeneficiaryDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) =>
   );
 };
 
-const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => void }) => {
+const MerchantDashboard = ({ onSelectTx, onAddNotification }: { onSelectTx: (tx: Transaction) => void, onAddNotification: (note: Omit<Notification, 'id'>) => void }) => {
   const [checkoutAmount, setCheckoutAmount] = useState('');
   const [success, setSuccess] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -756,6 +904,13 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
     setSuccess(true);
+    onAddNotification({
+      title: 'تم استلام دفعة',
+      message: `تم استلام ${formatYER(Number(checkoutAmount))} بنجاح.`,
+      time: 'الآن',
+      read: false,
+      type: 'TRANSACTION'
+    });
     setTimeout(() => {
       setSuccess(false);
       setCheckoutAmount('');
@@ -771,7 +926,7 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
 
       {/* Sale Action Area */}
       <div className="px-4">
-        <div className="bg-white border-2 border-natural-200 rounded-[32px] p-6 shadow-sm overflow-hidden relative">
+        <div className="bg-white border-2 border-natural-200 rounded-[32px] p-6 shadow-sm overflow-hidden relative mb-6">
           <div className="absolute top-0 left-0 w-2 h-full bg-natural-800"></div>
           
           <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
@@ -804,11 +959,11 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <button type="button" className="bg-natural-100 text-natural-800 py-4 rounded-2xl font-bold flex flex-col items-center gap-1 border border-natural-200">
+                  <button type="button" className="bg-natural-100 text-natural-800 py-4 rounded-2xl font-bold flex flex-col items-center gap-1 border border-natural-200 hover:bg-natural-200 transition-colors">
                     <QrCode size={20} />
                     <span className="text-xs">مسح الكود</span>
                   </button>
-                  <button type="button" className="bg-natural-100 text-natural-800 py-4 rounded-2xl font-bold flex flex-col items-center gap-1 border border-natural-200">
+                  <button type="button" className="bg-natural-100 text-natural-800 py-4 rounded-2xl font-bold flex flex-col items-center gap-1 border border-natural-200 hover:bg-natural-200 transition-colors">
                     <Smartphone size={20} />
                     <span className="text-xs">رقم الهاتف</span>
                   </button>
@@ -816,7 +971,7 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
 
                 <button 
                   type="submit"
-                  className="w-full bg-natural-800 text-white py-5 rounded-[20px] font-bold text-lg shadow-md hover:bg-natural-900 active:scale-95 transition-all"
+                  className="w-full bg-natural-800 text-white py-5 rounded-[20px] font-bold text-lg shadow-md hover:bg-natural-900 active:scale-95 transition-all outline-none"
                 >
                   إتمتم العملية وخصم الرصيد
                 </button>
@@ -843,15 +998,84 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
         </div>
       </div>
 
+      {/* Loyalty & Settlement Area */}
+      <div className="px-4 grid gap-4">
+        <div className="bg-gradient-to-br from-natural-800 to-natural-900 rounded-[32px] p-6 shadow-xl text-white relative overflow-hidden">
+           <div className="absolute top-0 right-0 p-8 opacity-10">
+             <Star size={120} />
+           </div>
+           <div className="relative z-10 flex items-start justify-between">
+             <div className="space-y-1">
+               <h3 className="text-sm font-bold text-natural-200 uppercase tracking-wider">برنامج الولاء</h3>
+               <p className="text-2xl font-bold flex items-center gap-2">المستوى الفضي <Star size={20} className="fill-current text-white"/></p>
+               <p className="text-xs text-natural-300 mt-1">نسبة العمولة الحالية: 0.6%</p>
+             </div>
+             <div className="text-right">
+               <p className="text-xs text-natural-300 mb-1">الهدف القادم: ذهبي</p>
+               <div className="w-16 h-1 bg-white/20 rounded-full overflow-hidden">
+                 <div className="w-[60%] h-full bg-white rounded-full"></div>
+               </div>
+               <p className="text-[10px] text-natural-300 mt-1">بقي 40 عملية بيع</p>
+             </div>
+           </div>
+        </div>
+
+        <div className="bg-white border-2 border-natural-200 rounded-[24px] p-5">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-sm font-bold text-natural-900 flex items-center gap-2">
+              <Calendar size={18} className="text-natural-500" />
+              جدولة التسوية التلقائية
+            </h3>
+          </div>
+          <div className="flex gap-2 text-sm justify-between bg-natural-50 p-2 rounded-xl border border-natural-100">
+            {['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس'].map(day => (
+              <button key={day} className={`flex-1 py-2 text-center rounded-lg font-bold transition-all ${day === 'الخميس' ? 'bg-natural-800 text-white shadow-md' : 'text-gray-500 hover:bg-natural-200'}`}>
+                {day}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-3 flex items-center gap-1"><AlertCircle size={12}/> سيتم تحويل أموالك المتراكمة تلقائياً كل يوم خميس إلى حسابك البنكي.</p>
+        </div>
+      </div>
+
       {/* Merchant Stats */}
-      <div className="px-4 grid grid-cols-2 gap-4">
+      <div className="px-4 grid grid-cols-2 gap-4 mt-6">
         <div className="bg-white border border-natural-200 rounded-[24px] p-5">
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">مبيعات اليوم</p>
           <p className="text-xl font-bold text-gray-900 font-mono">٤٥،٠٠٠ <span className="text-[10px] text-gray-400">ر.ي</span></p>
         </div>
         <div className="bg-white border border-natural-200 rounded-[24px] p-5">
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">عمولتك المتوقعة</p>
-          <p className="text-xl font-bold text-natural-800 font-mono">٤٥٠ <span className="text-[10px] text-natural-800 tracking-tight">ر.ي</span></p>
+          <p className="text-xl font-bold text-natural-800 font-mono">٢٧٠ <span className="text-[10px] text-natural-800 tracking-tight">ر.ي</span></p>
+        </div>
+      </div>
+
+      {/* Active Disputes Section */}
+      <div className="px-4">
+        <div className="bg-rose-50 border border-rose-100 rounded-[24px] p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-rose-900 flex items-center gap-2">
+              <MessageSquareWarning size={18} className="text-rose-600" />
+              الشكاوى والنزاعات النشطة (1)
+            </h3>
+            <span className="text-[10px] bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full font-bold">جديد</span>
+          </div>
+          <div className="bg-white rounded-xl p-3 border border-rose-100 cursor-pointer hover:border-rose-300 transition-colors">
+            <div className="flex justify-between items-start mb-2">
+              <div>
+                <p className="font-bold text-sm text-gray-900">محمد علي</p>
+                <p className="text-[10px] text-gray-500">منذ ساعتين • عملية #7391</p>
+              </div>
+              <span className="text-xs font-bold font-mono text-natural-800">١٢،٥٠٠ ر.ي</span>
+            </div>
+            <p className="text-xs text-rose-700 bg-rose-50 p-2 rounded-lg leading-relaxed">
+              <span className="font-bold">المشكلة:</span> السعر المخصوم أكبر من قيمة المشتريات الفعلية التي كانت ١٠،٠٠٠ ر.ي فقط.
+            </p>
+            <div className="flex gap-2 mt-3">
+              <button className="flex-1 bg-rose-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-rose-700">رد على الشكوى</button>
+              <button className="flex-1 border border-natural-200 text-natural-800 py-2 rounded-lg text-xs font-bold hover:bg-natural-50">إرجاع المبلغ</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -905,6 +1129,82 @@ const MerchantDashboard = ({ onSelectTx }: { onSelectTx: (tx: Transaction) => vo
   );
 };
 
+const NotificationsView = ({ notifications, setNotifications }: { notifications: Notification[], setNotifications: React.Dispatch<React.SetStateAction<Notification[]>> }) => {
+  const markAllRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  };
+
+  return (
+    <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
+      <header className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-natural-900">الإشعارات</h2>
+        <button onClick={markAllRead} className="text-sm font-bold text-natural-800 hover:opacity-80">تحديد الكل كمقروء</button>
+      </header>
+      <div className="space-y-3">
+        {notifications.map(n => (
+          <div key={n.id} className={`bg-white dark:bg-natural-50 border p-4 rounded-2xl flex items-start gap-4 transition-colors ${n.read ? 'border-natural-200' : 'border-rose-300 bg-rose-50/50 dark:bg-rose-900/10'}`}>
+            <div className={`p-2 rounded-xl mt-1 ${n.type === 'TRANSACTION' ? 'bg-emerald-100 text-emerald-600' : n.type === 'SECURITY' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
+              <Bell size={20} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="font-bold text-natural-900 text-sm">{n.title}</h3>
+                <span className="text-[10px] text-gray-400">{n.time}</span>
+              </div>
+              <p className="text-xs text-gray-500">{n.message}</p>
+            </div>
+            {!n.read && <div className="w-2 h-2 rounded-full bg-rose-500 mt-2"></div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SettingsView = ({ isDark, setIsDark, setView }: { isDark: boolean, setIsDark: (b: boolean) => void, setView: (v: ViewState) => void }) => {
+  return (
+    <div className="space-y-6 pt-20 pb-24 px-4" dir="rtl">
+      <header className="mb-6">
+        <h2 className="text-2xl font-bold text-natural-900">الإعدادات</h2>
+      </header>
+      
+      <div className="bg-white dark:bg-natural-50 rounded-3xl p-2 border border-natural-200">
+        <div className="p-4 border-b border-natural-100 dark:border-natural-200 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-natural-100 dark:bg-natural-200 text-natural-800 rounded-lg"><Moon size={20} /></div>
+            <div className="font-medium text-sm">المظهر الداكن (Dark Mode)</div>
+          </div>
+          <button 
+             onClick={() => setIsDark(!isDark)}
+             className={`w-12 h-6 rounded-full transition-colors relative ${isDark ? 'bg-natural-800' : 'bg-natural-200'}`}
+          >
+            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${isDark ? 'translate-x-1' : 'translate-x-[26px]'}`}></div>
+          </button>
+        </div>
+        
+        <div className="p-4 border-b border-natural-100 dark:border-natural-200 flex justify-between items-center cursor-pointer hover:bg-natural-50 dark:hover:bg-natural-100 transition-colors">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><Bell size={20} /></div>
+            <div className="font-medium text-sm">إعدادات الإشعارات</div>
+          </div>
+          <ChevronLeft size={16} className="text-gray-400" />
+        </div>
+        
+        <div className="p-4 flex justify-between items-center cursor-pointer hover:bg-natural-50 dark:hover:bg-natural-100 transition-colors">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Globe size={20} /></div>
+            <div className="font-medium text-sm">لغة التطبيق</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">العربية</span>
+            <ChevronLeft size={16} className="text-gray-400" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Main App Component ---
 
 export default function App() {
@@ -913,6 +1213,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDark, setIsDark] = useState(false);
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>(INITIAL_NOTIFICATIONS);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1200);
@@ -948,19 +1249,27 @@ export default function App() {
   }
 
   const renderView = () => {
+    const handleAddNotification = (note: Omit<Notification, 'id'>) => {
+      setNotifications(prev => [{ ...note, id: 'n' + Date.now() }, ...prev]);
+    };
+
     if (view === 'PROFILE') return <ProfileView role={role} />;
     if (view === 'USSD') return <USSDSimulator onClose={() => setView('DASHBOARD')} />;
     if (view === 'ONBOARDING') return <MerchantOnboarding setView={setView} />;
+    if (view === 'SETTINGS') return <SettingsView isDark={isDark} setIsDark={setIsDark} setView={setView} />;
+    if (view === 'NOTIFICATIONS') return <NotificationsView notifications={notifications} setNotifications={setNotifications} />;
     
-    if (role === 'SENDER') return <SenderDashboard onSelectTx={setSelectedTx} />;
+    if (role === 'SENDER') return <SenderDashboard onSelectTx={setSelectedTx} onAddNotification={handleAddNotification} />;
     if (role === 'BENEFICIARY') return <BeneficiaryDashboard onSelectTx={setSelectedTx} />;
-    if (role === 'MERCHANT') return <MerchantDashboard onSelectTx={setSelectedTx} />;
+    if (role === 'MERCHANT') return <MerchantDashboard onSelectTx={setSelectedTx} onAddNotification={handleAddNotification} />;
     return null;
   };
 
+  const unreadCount = notifications.filter(n => !n.read).length;
+
   return (
     <div className="min-h-screen bg-natural-50 dark:bg-natural-100 text-[#1A1A1A] dark:text-natural-900 selection:bg-natural-200 font-sans" dir="rtl">
-      <Navbar role={role} setRole={setRole} isDark={isDark} setIsDark={setIsDark} setView={setView} />
+      <Navbar role={role} setRole={setRole} isDark={isDark} setIsDark={setIsDark} setView={setView} unreadCount={unreadCount} />
       
       <main className="max-w-md mx-auto min-h-screen pb-24 relative">
         <AnimatePresence mode="wait">
